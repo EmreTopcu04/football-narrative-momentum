@@ -1,0 +1,16 @@
+# --- Data Extraction & Manipulation ---
+statsbombpy==1.13.0
+pandas>=2.0.0
+
+# --- Machine Learning & LLM ---
+torch>=2.0.0
+transformers>=4.30.0
+peft>=0.5.0             # For QLoRA fine-tuning 
+accelerate>=0.21.0      # Required by Hugging Face for efficient model loading
+bitsandbytes>=0.41.0    # Required for quantizing the model (the 'Q' in QLoRA)
+
+# --- Evaluation & Visualization ---
+scikit-learn>=1.3.0     # For calculating F1-scores and ROC-AUC
+jupyter>=1.0.0          # For running the notebooks
+matplotlib>=3.7.0       # For plotting attention weights
+seaborn>=0.12.0         # For making the plots look good

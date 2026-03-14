@@ -1,0 +1,36 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Processed data & model weights (reproducible via main.py + StatsBomb)
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Hugging Face / transformers cache
+.cache/
+transformers_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Optional: uncomment to keep secrets out of the repo
+# .env
+# *.pem
