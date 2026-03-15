@@ -80,31 +80,32 @@ def _compute_xg_labels(lines, meta_df, tok, context_length, stride,
             from_poss += 1
 
     total = len(labels)
-    print(f"  Label source : {from_xg}/{total} ({100*from_xg/total:.1f}%) xG-delta  |  "
-          f"{from_poss}/{total} ({100*from_poss/total:.1f}%) possession tie-break  "
-          f"[window ±{label_window_minutes} min]")
+    if total > 0:
+        print(f"  Label source : {from_xg}/{total} ({100*from_xg/total:.1f}%) xG-delta  |  "
+              f"{from_poss}/{total} ({100*from_poss/total:.1f}%) possession tie-break  "
+              f"[window ±{label_window_minutes} min]")
 
     return torch.tensor(labels, dtype=torch.long)
 
 
 def tokenize_match_narrative(input_file, match_id, meta_file,
                              output_dir="../data/processed",
+                             model_name="gpt2",
                              context_length=128, stride=64,
                              label_window_minutes=5):
     """
-    Tokenises a match narrative into overlapping 128-token sliding windows
-    and generates an xG-delta momentum label for each window.
+    Tokenises a match narrative into overlapping sliding windows and generates
+    an xG-delta momentum label for each window.
 
-    label_window_minutes controls how far (in real match time) the label
-    computation looks beyond the boundaries of each token window when
-    summing xG.  Higher values → more shot events inform each label →
-    xG dominates over the possession tie-breaker more often.
+    model_name controls which tokenizer is used — must match the model that
+    will be trained, since different models have different vocabularies.
 
     Saves a dict  {'input_ids': Tensor[N, 128], 'labels': Tensor[N]}
     to  match_{match_id}_dataset.pt
     """
-    tok = AutoTokenizer.from_pretrained("gpt2")
-    tok.pad_token = tok.eos_token
+    tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
 
     with open(input_file, 'r', encoding='utf-8') as f:
         text = f.read()
@@ -140,11 +141,11 @@ def tokenize_match_narrative(input_file, match_id, meta_file,
 
 
 if __name__ == "__main__":
-    MATCH_ID      = 3754058
-    INPUT_FILE    = f"../data/processed/match_{MATCH_ID}_narrative.txt"
-    META_FILE     = f"../data/processed/match_{MATCH_ID}_meta.csv"
+    MATCH_ID   = 3754058
+    INPUT_FILE = f"../data/processed/match_{MATCH_ID}_narrative.txt"
+    META_FILE  = f"../data/processed/match_{MATCH_ID}_meta.csv"
     if os.path.exists(INPUT_FILE) and os.path.exists(META_FILE):
         tokenize_match_narrative(INPUT_FILE, match_id=MATCH_ID, meta_file=META_FILE,
-                                 label_window_minutes=5)
+                                 model_name="Qwen/Qwen2.5-0.5B", label_window_minutes=5)
     else:
         print("Error: run data_pipeline.py first to generate the narrative and meta files.")

@@ -31,11 +31,12 @@ def _load_inference_model(model_name, weights_dir):
             num_labels=2,
             quantization_config=bnb_config,
             device_map="auto",
+            trust_remote_code=True,
         )
     except (ValueError, RuntimeError):
         print("  GPU/quantisation unavailable — loading on CPU.")
         base = AutoModelForSequenceClassification.from_pretrained(
-            model_name, num_labels=2
+            model_name, num_labels=2, trust_remote_code=True
         )
 
     if base.config.pad_token_id is None:
@@ -119,10 +120,15 @@ def evaluate_model(test_files, weights_dir, model_name="gpt2", batch_size=16):
     all_true  = np.array(all_true)
 
     # ── Metrics ────────────────────────────────────────────────────────────
-    acc     = accuracy_score(all_true, all_preds)
-    f1      = f1_score(all_true, all_preds, average='macro')
-    roc_auc = roc_auc_score(all_true, all_probs)
-    cm      = confusion_matrix(all_true, all_preds)
+    acc = accuracy_score(all_true, all_preds)
+    f1  = f1_score(all_true, all_preds, average='macro')
+    n_classes = len(np.unique(all_true))
+    if n_classes < 2:
+        roc_auc = 0.5
+        print("  Warning: only one class in test set; ROC-AUC set to 0.5.")
+    else:
+        roc_auc = roc_auc_score(all_true, all_probs)
+    cm = confusion_matrix(all_true, all_preds)
     report  = classification_report(all_true, all_preds,
                                     target_names=['Away momentum', 'Home momentum'])
 
