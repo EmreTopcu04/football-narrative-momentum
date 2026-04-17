@@ -1,3 +1,10 @@
+"""
+Evaluation Module
+
+This module is responsible for loading the trained Large Language Model (base model + LoRA adapter)
+and evaluating its performance on the test dataset. It computes quantitative metrics such as 
+Accuracy, F1 Score, and ROC-AUC for the predicted momentum classes.
+"""
 import os
 import torch
 import numpy as np
@@ -11,12 +18,20 @@ from sklearn.metrics import (
     confusion_matrix,
     classification_report,
 )
+from tqdm import tqdm
+
+NUM_LABELS = 3
+CLASS_NAMES = ['Away Momentum', 'Balanced', 'Home Momentum']
 
 
-def _load_inference_model(model_name, weights_dir):
+def _load_inference_model(model_name, weights_dir, num_labels=NUM_LABELS):
     """
-    Rebuilds the base model + loads the saved LoRA adapter for inference.
-    Tries 4-bit quantisation on GPU first; falls back to full-precision CPU.
+    Builds the base language model architecture and applies the trained LoRA adapter on top.
+    
+    Args:
+        model_name (str): The identifier for the base HuggingFace model.
+        weights_dir (str): Path to the saved LoRA adapter weights, or a Hugging Face repo ID.
+        num_labels (int): Number of classes for the sequence classifier.
     """
     print(f"Loading base model '{model_name}'...")
     try:
@@ -28,15 +43,16 @@ def _load_inference_model(model_name, weights_dir):
         )
         base = AutoModelForSequenceClassification.from_pretrained(
             model_name,
-            num_labels=2,
+            num_labels=num_labels,
             quantization_config=bnb_config,
             device_map="auto",
             trust_remote_code=True,
         )
-    except (ValueError, RuntimeError):
-        print("  GPU/quantisation unavailable — loading on CPU.")
+    except Exception as e:
+        print(f"\n[!] GPU SETUP FAILED: {e}")
+        print("    Loading standard model on CPU.")
         base = AutoModelForSequenceClassification.from_pretrained(
-            model_name, num_labels=2, trust_remote_code=True
+            model_name, num_labels=num_labels, trust_remote_code=True
         )
 
     if base.config.pad_token_id is None:
@@ -48,68 +64,56 @@ def _load_inference_model(model_name, weights_dir):
     return model
 
 
-def evaluate_model(test_files, weights_dir, model_name="gpt2", batch_size=16):
+def evaluate_model(test_files, weights_dir, model_name="gpt2",
+                   batch_size=16, max_samples=None, num_labels=NUM_LABELS):
     """
-    Runs inference on an explicit list of match_*_dataset.pt test files and
-    prints a full evaluation report:
-
-      • Accuracy
-      • Macro F1-score
-      • ROC-AUC
-      • Confusion matrix
-      • Per-class precision/recall
-
-    Parameters
-    ----------
-    test_files  : list[str]   paths to match_*_dataset.pt files (test split)
-    weights_dir : str         directory produced by model.save_pretrained()
-    model_name  : str         base HuggingFace model id (must match training)
-    batch_size  : int         inference batch size (larger = faster on GPU)
+    Runs inference on test set and reports 3-class momentum metrics.
     """
-    if not os.path.isdir(weights_dir):
-        print(f"Weights directory not found: {weights_dir}")
-        print("Train the model first (Step 3 in main.py).")
-        return
-
     test_files = [f for f in test_files if os.path.exists(f)]
     if not test_files:
         print("No test dataset files found.")
         return
 
-    # ── Load test data ─────────────────────────────────────────────────────
     print(f"\nLoading test data from {len(test_files)} match(es)...")
     all_input_ids, all_labels = [], []
     for f in test_files:
-        data = torch.load(f)
+        data = torch.load(f, weights_only=True)
         all_input_ids.append(data['input_ids'])
         all_labels.append(data['labels'])
 
-    input_ids    = torch.cat(all_input_ids, dim=0)
-    true_labels  = torch.cat(all_labels,    dim=0)
+    input_ids   = torch.cat(all_input_ids, dim=0)
+    true_labels = torch.cat(all_labels,    dim=0)
 
-    home_pct = true_labels.float().mean().item() * 100
-    print(f"Test windows : {len(input_ids):,}")
-    print(f"Label balance: {home_pct:.1f}% home / {100 - home_pct:.1f}% away\n")
+    # Subsampling
+    if max_samples is not None and max_samples < len(input_ids):
+        torch.manual_seed(42)
+        indices = torch.randperm(len(input_ids))[:max_samples]
+        input_ids   = input_ids[indices]
+        true_labels = true_labels[indices]
+        print(f"  Reduced test set to: {max_samples:,} random windows.")
 
-    # ── Load model ─────────────────────────────────────────────────────────
-    model  = _load_inference_model(model_name, weights_dir)
+    # Class distribution
+    for i, name in enumerate(CLASS_NAMES):
+        pct = (true_labels == i).float().mean().item() * 100
+        print(f"  {name}: {pct:.1f}%")
+
+    model  = _load_inference_model(model_name, weights_dir, num_labels=num_labels)
     device = next(model.parameters()).device
 
-    # ── Inference loop ─────────────────────────────────────────────────────
     dataset    = TensorDataset(input_ids, true_labels)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
     all_preds, all_probs, all_true = [], [], []
 
-    print("Running inference...")
+    bar = tqdm(dataloader, desc="Evaluating", total=len(dataloader))
     with torch.no_grad():
-        for batch_ids, batch_labels in dataloader:
+        for batch_ids, batch_labels in bar:
             batch_ids = batch_ids.to(device)
             outputs   = model(input_ids=batch_ids)
 
-            # Probabilities via softmax; column 1 = P(home momentum)
-            probs = torch.softmax(outputs.logits, dim=-1)[:, 1].cpu().numpy()
-            preds = outputs.logits.argmax(dim=-1).cpu().numpy()
+            logits_f = outputs.logits.float()
+            probs    = torch.softmax(logits_f, dim=-1).cpu().numpy()
+            preds    = logits_f.argmax(dim=-1).cpu().numpy()
 
             all_probs.extend(probs.tolist())
             all_preds.extend(preds.tolist())
@@ -119,34 +123,31 @@ def evaluate_model(test_files, weights_dir, model_name="gpt2", batch_size=16):
     all_probs = np.array(all_probs)
     all_true  = np.array(all_true)
 
-    # ── Metrics ────────────────────────────────────────────────────────────
-    acc = accuracy_score(all_true, all_preds)
-    f1  = f1_score(all_true, all_preds, average='macro')
-    n_classes = len(np.unique(all_true))
-    if n_classes < 2:
-        roc_auc = 0.5
-        print("  Warning: only one class in test set; ROC-AUC set to 0.5.")
-    else:
-        roc_auc = roc_auc_score(all_true, all_probs)
-    cm = confusion_matrix(all_true, all_preds)
-    report  = classification_report(all_true, all_preds,
-                                    target_names=['Away momentum', 'Home momentum'])
+    acc    = accuracy_score(all_true, all_preds)
+    f1_mac = f1_score(all_true, all_preds, average='macro')
+    f1_w   = f1_score(all_true, all_preds, average='weighted')
+    cm     = confusion_matrix(all_true, all_preds)
+    report = classification_report(all_true, all_preds, target_names=CLASS_NAMES)
 
-    print("\n" + "=" * 50)
-    print("         EVALUATION RESULTS")
-    print("=" * 50)
-    print(f"  Accuracy   : {acc:.4f}  ({acc * 100:.2f}%)")
-    print(f"  Macro F1   : {f1:.4f}")
-    print(f"  ROC-AUC    : {roc_auc:.4f}")
-    print()
-    print("  Confusion Matrix")
-    print("  (rows=actual, cols=predicted)")
-    print(f"               Away   Home")
-    print(f"  Actual Away  {cm[0,0]:5d}  {cm[0,1]:5d}")
-    print(f"  Actual Home  {cm[1,0]:5d}  {cm[1,1]:5d}")
-    print()
-    print("  Per-class breakdown:")
-    print(report)
-    print("=" * 50)
+    # ROC-AUC (one-vs-rest for multiclass)
+    try:
+        roc_auc = roc_auc_score(all_true, all_probs, multi_class='ovr', average='macro')
+    except Exception:
+        roc_auc = None
 
-    return {"accuracy": acc, "macro_f1": f1, "roc_auc": roc_auc}
+    print("\n" + "=" * 55)
+    print("           EVALUATION RESULTS (3-Class)")
+    print("=" * 55)
+    print(f"  Accuracy      : {acc:.4f}  ({acc * 100:.2f}%)")
+    print(f"  Macro F1      : {f1_mac:.4f}")
+    print(f"  Weighted F1   : {f1_w:.4f}")
+    if roc_auc is not None:
+        print(f"  ROC-AUC (OvR) : {roc_auc:.4f}")
+    print(f"\n  Confusion Matrix (rows=Actual, cols=Pred):")
+    print(f"                {'  '.join(f'{n[:4]:>6}' for n in CLASS_NAMES)}")
+    for i, row in enumerate(cm):
+        print(f"  {CLASS_NAMES[i][:14]:<14} {'  '.join(f'{v:6d}' for v in row)}")
+    print(f"\n{report}")
+    print("=" * 55)
+
+    return {"accuracy": acc, "macro_f1": f1_mac, "weighted_f1": f1_w, "roc_auc": roc_auc}

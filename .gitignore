@@ -2,7 +2,7 @@
 .venv/
 venv/
 env/
-
+.env
 # Processed data & model weights (reproducible via main.py + StatsBomb)
 data/
 
