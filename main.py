@@ -19,7 +19,7 @@ from huggingface_hub import login
 
 
 
-# Prevent CUDA memory fragmentation on 8GB VRAM cards
+# Prevent CUDA memory fragmentation 
 os.environ['PYTORCH_ALLOC_CONF'] = 'expandable_segments:True'
 
 warnings.filterwarnings('ignore')
@@ -36,13 +36,17 @@ from evaluate import evaluate_model
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 
-# LOCAL BASELINE CONFIG (1.5B Model + 512 Context) - Keep for reference
+# LOCAL BASELINE CONFIG
 MODEL_NAME           = "Qwen/Qwen2.5-1.5B"
 CONTEXT_LENGTH       = 512
 STRIDE               = 256
 
 NUM_LABELS           = 3      # 0=Away, 1=Balanced, 2=Home
 TRAIN_RATIO          = 0.8
+# Random window subsample within each split (seed fixed in train.py / evaluate.py).
+# None = use every window from train/test matches. Caps align with the ~20k / ~5k eval setup.
+TRAIN_MAX_SAMPLES    = 20_000
+EVAL_MAX_SAMPLES     = 5_000
 LABEL_WINDOW_MINUTES = 5      
 PROJECT_ROOT         = os.path.dirname(os.path.abspath(__file__))
 # ── Directory layout ───────────────────────────────────────────────────────────
@@ -199,8 +203,8 @@ def run_pipeline():
         weights_dir=WEIGHTS_DIR,
         epochs=1,              
         batch_size=8,
-        accumulation_steps=4,  # More stable for 7B
-        max_samples=None,      # Full dataset!
+        accumulation_steps=4, 
+        max_samples=TRAIN_MAX_SAMPLES,
         num_labels=NUM_LABELS,
     )
 
@@ -209,7 +213,7 @@ def run_pipeline():
 
     print("\n--- STEP 6: Evaluation ---")
 
-    evaluate_model(test_files=test_files, weights_dir=WEIGHTS_DIR, model_name=MODEL_NAME, max_samples=None)
+    evaluate_model(test_files=test_files, weights_dir=WEIGHTS_DIR, model_name=MODEL_NAME, max_samples=EVAL_MAX_SAMPLES)
 
 
 def _get_split():
@@ -244,10 +248,10 @@ def run_train_only():
         dataset_files=train_files,
         model_name=MODEL_NAME,
         weights_dir=WEIGHTS_DIR,
-        epochs=1,              # 1 epoch for quick validation test
+        epochs=1,           
         batch_size=8,
         accumulation_steps=2,
-        max_samples=None,
+        max_samples=TRAIN_MAX_SAMPLES,
         num_labels=NUM_LABELS,
     )
 
@@ -256,7 +260,7 @@ def run_train_only():
 
     print("\n--- Evaluation ---")
 
-    evaluate_model(test_files=test_files, weights_dir=WEIGHTS_DIR, model_name=MODEL_NAME, max_samples=None)
+    evaluate_model(test_files=test_files, weights_dir=WEIGHTS_DIR, model_name=MODEL_NAME, max_samples=EVAL_MAX_SAMPLES)
 
 
 def run_evaluate_only():
@@ -265,7 +269,7 @@ def run_evaluate_only():
     print("=" * 60 + "\n")
     _, test_files = _get_split()
     print(f"Test set: {len(test_files)} matches\n")
-    evaluate_model(test_files=test_files, weights_dir=WEIGHTS_DIR, model_name=MODEL_NAME, max_samples=None)
+    evaluate_model(test_files=test_files, weights_dir=WEIGHTS_DIR, model_name=MODEL_NAME, max_samples=EVAL_MAX_SAMPLES)
 
 
 def run_fetch_only():

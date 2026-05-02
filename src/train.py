@@ -135,7 +135,6 @@ def train_model(dataset_files, model_name="gpt2", epochs=3, lr=3e-5,
 
     model.train()
     
-    # CRITICAL HW CHECK: Ensure we are not accidentally on CPU
     actual_device = next(model.parameters()).device
     print(f"\n" + "!"*60)
     print(f"  DEVICE DEPLOYED : {actual_device}")
