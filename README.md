@@ -73,3 +73,47 @@ Short flags: `-f` fetch, `-r` retokenize (`--resume` to skip finished matches), 
 Train/test split is **by match** (80/20). Window subsampling caps are configured in `main.py` (`TRAIN_MAX_SAMPLES`, `EVAL_MAX_SAMPLES`).
 
 Passing no mode prints usage and exits.
+
+## Sample input and output
+
+### Input (raw narrative)
+
+After `fetch`, each match is stored under `data/raw/` as `match_<id>_narrative.txt` (chronological event text). Excerpt from `data/raw/match_69161_narrative.txt`:
+
+```text
+[00:00] [Spain Women's 0-0 Opponent] Spain Women's: Jennifer Hermoso Fuentes completed a pass (ground pass) from the middle third (center) to Irene Paredes Hernandez.
+[00:02] [Spain Women's 0-0 Opponent] Spain Women's: Irene Paredes Hernandez attempted a incomplete pass (high pass) from the defensive third (right half-space) to Alexia Putellas Segura.
+[00:05] [Spain Women's 0-0 Opponent] United States Women's: Kelley Maureen O'Hara cleared the ball in the defensive third (right flank) under pressure from Spain Women's.
+…
+```
+
+`retokenize` turns these into sliding windows in `data/pt-files/match_*_dataset.pt` (token tensors + labels).
+
+### What the model predicts
+
+Each window is a **3-class** momentum label: **Away Momentum**, **Balanced**, **Home Momentum** (see `CLASS_NAMES` in `src/evaluate.py`). There is no natural-language prompt; the LM trunk sees tokenized narrative windows and the classification head outputs logits.
+
+### Output from training (`python main.py train`)
+
+The training loop prints per-step loss in the tqdm bar (`avg_loss`) and a per-epoch line, e.g. `Epoch 1 avg loss: 0.9601`, and writes LoRA weights under `data/processed/football_lora_weights/`.
+
+### Output from evaluation (`python main.py evaluate`)
+
+Evaluation aggregates predictions over the test windows and **prints** accuracy, macro/weighted F1, ROC-AUC (one-vs-rest), confusion matrix, and a per-class classification report—see `src/evaluate.py`. Example shape of the summary (figures vary by run and checkpoint):
+
+```text
+=======================================================
+           EVALUATION RESULTS (3-Class)
+=======================================================
+  Accuracy      : 0.8000  (80.00%)
+  Macro F1      : 0.7767
+  Weighted F1   : 0.7996
+  ROC-AUC (OvR) : 0.8748
+
+  Confusion Matrix (rows=Actual, cols=Pred):
+                  Away    Bala    Home
+  Away Momentum     706     221      86
+  Balanced          198    2319     222
+  Home Momentum      56     217     975
+…
+```
